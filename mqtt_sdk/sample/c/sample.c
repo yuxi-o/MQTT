@@ -17,6 +17,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include <assert.h>
 #include <time.h>
@@ -80,7 +81,8 @@ static int MqttSample_CmdConnect(struct MqttSampleContext *ctx);
 static int MqttSample_CmdPing(struct MqttSampleContext *ctx);
 static int MqttSample_RespCmdPublish(struct MqttSampleContext *ctx);
 static int MqttSample_CmdPublish(struct MqttSampleContext *ctx);
-static int MqttSample_CmdPushDp(struct MqttSampleContext *ctx);
+static int MqttSample_CmdPush(struct MqttSampleContext *ctx);
+static int MqttSample_CmdPushDpString(struct MqttSampleContext *ctx);
 static int MqttSample_CmdSubscribe(struct MqttSampleContext *ctx);
 static int MqttSample_CmdUnsubscribe(struct MqttSampleContext *ctx);
 static int MqttSample_CmdDisconnect(struct MqttSampleContext *ctx);
@@ -99,7 +101,8 @@ static const struct Command commands[] = {
     {"connect", MqttSample_CmdConnect, "Establish the connection."},
     {"ping", MqttSample_CmdPing, "Send ping packet."},
     {"publish",MqttSample_CmdPublish,"send data points, support parameter -q 0/1/2 (Qos0/Qos1/Qos2), -t 1-7 "},
-    {"push_dp",MqttSample_CmdPushDp,"push data points"},
+    {"push",MqttSample_CmdPush,"push pyload"},
+    {"push_dp",MqttSample_CmdPushDpString,"push data points by string"},
     {"cmdret",MqttSample_RespCmdPublish,"reponse cmd to server, support parameter -q 0/1/2 (Qos0/Qos1/Qos2)"},
     {"subscribe", MqttSample_CmdSubscribe, "Subscribe the data streams."},
     {"unsubscribe", MqttSample_CmdUnsubscribe, "Unsubscribe the data streams."},
@@ -176,6 +179,16 @@ static int MqttSample_CreateTcpConnect(const char *host, unsigned short port)
 static int MqttSample_RecvPkt(void *arg, void *buf, uint32_t count)
 {
     int bytes = read((int)(size_t)arg, buf, count);
+	printf("----------------------------------------------------receive %d bytes--", bytes);
+	for(int i = 0; i < bytes; ++i) {
+        const char c = *((char *)buf + i);
+        if(0 == i % 16) {
+            printf("\n");
+        }
+        printf("%02X'%c' ", c, c);
+    }
+	printf("\n----------------------------------------------------receive end--\n");
+
     return bytes;
 }
 
@@ -490,6 +503,23 @@ static int MqttSample_CmdPublishString(struct MqttSampleContext *ctx, int qos){
     return err;
 }
 
+static int MqttSample_CmdPublishStringCustom(struct MqttSampleContext *ctx, int qos){
+    char str[128] = {0};
+    uint32_t size = 0;
+    int retain = 0;
+    int own = 1;
+    int err = MQTTERR_NOERROR;
+
+	time_t tt = time(NULL);
+	snprintf(str, sizeof(str), ",;%ld;%ld;%ld;%ld;%ld", tt, tt, tt, tt, tt);
+	size = strlen(str);
+
+    MqttBuffer_Init(ctx->mqttbuf);
+    err = Mqtt_PackDataPointByString(ctx->mqttbuf, g_pkt_id++, 0, kTypeString, str, size, qos, retain, own);
+
+    return err;
+}
+
 static int MqttSample_CmdPublishStringWithTime(struct MqttSampleContext *ctx, int qos){
     const char *str = ",;temperature,2015-03-22 22:31:12,22.5;102;pm2.5,89;10";
     uint32_t size = strlen(str);
@@ -606,7 +636,7 @@ static int MqttSample_CmdPublish(struct MqttSampleContext *ctx)
 }
 
 
-static int MqttSample_CmdPushDp(struct MqttSampleContext *ctx)
+static int MqttSample_CmdPush(struct MqttSampleContext *ctx)
 {
 
     int err;
@@ -614,7 +644,7 @@ static int MqttSample_CmdPushDp(struct MqttSampleContext *ctx)
     size_t topics_len = 0;
     int i=0;
 
-/*去掉最后回车键
+/*去???????爻???
  */
     for(i=strlen(buf); i>0; --i){
         if(buf[i-1] == 0x0a)
@@ -639,16 +669,54 @@ static int MqttSample_CmdPushDp(struct MqttSampleContext *ctx)
 
     int pkg_id = atoi(*(topics+3));
     err = Mqtt_PackPublishPkt(ctx->mqttbuf, pkg_id, *(topics+1), *(topics+2), strlen(*(topics+2)), MQTT_QOS_LEVEL1, 0, 1);
-
     if(err != MQTTERR_NOERROR) {
         return err;
     }
 
     return 0;
-
-
 }
 
+static int MqttSample_CmdPushDpString(struct MqttSampleContext *ctx)
+{
+
+    int err;
+    char **topics;
+    size_t topics_len = 0;
+    int i=0;
+
+/*去???????爻???
+ */
+    for(i=strlen(buf); i>0; --i){
+        if(buf[i-1] == 0x0a)
+            buf[i-1] = 0x00;
+    }
+
+    topics = str_split(buf, &topics_len);
+
+    if(4 != topics_len){
+        printf("usage:push_dp topicname payload pkg_id\n");
+        return 0;
+    }
+
+    printf("topic anme:%s\n", *(topics+1));
+    printf("payload:%s\n", *(topics+2));
+    printf("pkg_id:%s\n", *(topics+3));
+    printf("\n");
+
+    if(ctx->mqttbuf->first_ext) {
+        return MQTTERR_INVALID_PARAMETER;
+    }
+
+    int pkg_id = atoi(*(topics+3));
+    //err = Mqtt_PackDataPointByString(ctx->mqttbuf, g_pkt_id++, 0, kTypeString, str, size, qos, retain, own);
+    //err = Mqtt_PackPublishPkt(ctx->mqttbuf, pkg_id, *(topics+1), *(topics+2), strlen(*(topics+2)), MQTT_QOS_LEVEL1, 0, 1);
+    err = Mqtt_PackDataPointByString(ctx->mqttbuf, pkg_id, 0, kTypeString, *(topics+2), strlen(*(topics+2)), MQTT_QOS_LEVEL1, 0, 1);
+    if(err != MQTTERR_NOERROR) {
+        return err;
+    }
+
+    return 0;
+}
 
 
 static int MqttSample_RespCmdPublish(struct MqttSampleContext *ctx){
@@ -707,7 +775,7 @@ static int MqttSample_CmdSubscribe(struct MqttSampleContext *ctx)
     int i = 0;
 
     
-/*去掉最后回车键
+/*去???????爻???
  */
     for(i=strlen(buf); i>0; --i){
         if(buf[i-1] == 0x0a)
@@ -737,7 +805,7 @@ static int MqttSample_CmdUnsubscribe(struct MqttSampleContext *ctx)
     int i = 0;
 
     
-/*去掉最后回车键
+/*去???????爻???
  */
     for(i=strlen(buf); i>0; --i){
         if(buf[i-1] == 0x0a)
@@ -805,7 +873,7 @@ static int MqttSample_CmdHelp(struct MqttSampleContext *ctx)
     return 0;
 }
 
-static int MqttSample_HandleStdin(struct MqttSampleContext *ctx, uint32_t events)
+static int MqttSample_HandleStdin(struct MqttSampleContext *ctx, uint32_t events, bool send, int pkt_ret)
 {
     int bytes, i, ret = 0;
 
@@ -813,28 +881,32 @@ static int MqttSample_HandleStdin(struct MqttSampleContext *ctx, uint32_t events
         printf("There are something to be send, please wait a moment to retry.\n");
         return 0;
     }
+	
+	if(send){
+		ret = pkt_ret;
+	}else{
+		memset(buf, buf_size, 0);
+		bytes = read(STDIN_FILENO, buf, buf_size);
+		buf[bytes - 1] = 0;
 
-    memset(buf, buf_size, 0);
-    bytes = read(STDIN_FILENO, buf, buf_size);
-    buf[bytes - 1] = 0;
 
-
-    char tmp_buf[1024];
-    memcpy(tmp_buf, buf, bytes);
-    for(i=0; i<bytes; ++i){
-        if(tmp_buf[i]==' '){
-            tmp_buf[i]=0;
-            break;
-        }
-    }
-    for(i = 0; i < sizeof(commands) / sizeof(*commands); ++i) {
-        if(strcmp(commands[i].cmd, tmp_buf) == 0) {
-            if((ret = commands[i].func(ctx)) < 0) {
-                return -1;
-            }
-            break;
-        }
-    }
+		char tmp_buf[1024];
+		memcpy(tmp_buf, buf, bytes);
+		for(i=0; i<bytes; ++i){
+			if(tmp_buf[i]==' '){
+				tmp_buf[i]=0;
+				break;
+			}
+		}
+		for(i = 0; i < sizeof(commands) / sizeof(*commands); ++i) {
+			if(strcmp(commands[i].cmd, tmp_buf) == 0) {
+				if((ret = commands[i].func(ctx)) < 0) {
+					return -1;
+				}
+				break;
+			}
+		}
+	}
 
     bytes = Mqtt_SendPkt(ctx->mqttctx, ctx->mqttbuf, 0);
     if(bytes < 0) {
@@ -1048,11 +1120,21 @@ int main(int argc, char **argv)
     (void)MqttSample_CmdHelp(smpctx);
 
     exit = 0;
-    while(!exit && (evt_cnt = epoll_wait(smpctx->epfd, events, evt_max_cnt, -1)) >= 0) {
+    while(!exit && (evt_cnt = epoll_wait(smpctx->epfd, events, evt_max_cnt, 5000)) >= 0) {
+		int pkt_ret = 0;
+		if(evt_cnt == 0){
+			pkt_ret = MqttSample_CmdPublishStringCustom(smpctx, 0);
+			if(MqttSample_HandleStdin(smpctx, 0, true, pkt_ret) < 0) {
+				exit = 1;
+				break;
+			} else{
+				continue;
+			}
+		}
         int i;
         for(i = 0; i < evt_cnt; ++i) {
             if(STDIN_FILENO == events[i].data.fd) {
-                if(MqttSample_HandleStdin(smpctx, events[i].events) < 0) {
+                if(MqttSample_HandleStdin(smpctx, events[i].events, false, 0) < 0) {
                     exit = 1;
                     break;
                 }
